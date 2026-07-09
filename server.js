@@ -2,7 +2,6 @@ import express from "express";
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import cors from "cors";
-import nodemailer from "nodemailer";
 import Bytez from "bytez.js";
 import multer from "multer";
 import fs from "fs";
@@ -48,15 +47,30 @@ mongoose
   .catch((err) => console.error("❌ MongoDB connection failed:", err));
 
 // ======================= Nodemailer =======================
-const transporter = nodemailer.createTransport({
-  host: "smtp-relay.brevo.com",
-  port: 465,
-  secure: true,   // 465 ke liye true hona chahiye
-  auth: {
-    user: process.env.BREVO_SMTP_USER,
-    pass: process.env.BREVO_SMTP_PASS,
-  },
-});
+// ======================= Brevo HTTP API (replaces SMTP) =======================
+async function sendBrevoEmail({ to, subject, html }) {
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "api-key": process.env.BREVO_API_KEY,
+    },
+    body: JSON.stringify({
+      sender: { name: "Medisynn", email: "medisynn.care24@gmail.com" },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.message || "Brevo API failed");
+  }
+
+  return data;
+}
 
 // ======================= Bytez (AI) =======================
 const sdk = new Bytez(process.env.BYTEZ_API_KEY);
@@ -186,12 +200,11 @@ api.post("/send-otp", async (req, res) => {
   </div>
 `;
 
-    await transporter.sendMail({
-      from: "Medisynn <medisynn.care24@gmail.com>",
-      to: cleanEmail,
-      subject: "Your OTP Code – Medisynn Verification",
-      html: htmlTemplate,
-    });
+  await sendBrevoEmail({
+  to: cleanEmail,
+  subject: "Your OTP Code – Medisynn Verification",
+  html: htmlTemplate,
+});
 
     res.status(200).json({ message: "OTP sent successfully" });
   } catch (err) {
