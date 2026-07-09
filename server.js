@@ -7,6 +7,8 @@ import Bytez from "bytez.js";
 import multer from "multer";
 import fs from "fs";
 import path from "path";
+import cloudinary from "./config/cloudinary.js";
+import { CloudinaryStorage } from "multer-storage-cloudinary";
 import dotenv from "dotenv";
 dotenv.config();
 import dns from "dns";
@@ -25,16 +27,18 @@ app.get("/", (req, res) => {
 
 console.log("🔥🔥🔥 SERVER.JS LOADED 🔥🔥🔥");
 
-// ======================= STATIC UPLOADS FOLDER =======================
-app.use("/uploads", express.static("uploads"));
+
 
 // ======================= MULTER: FILE STORAGE =======================
-const storage = multer.diskStorage({
-  destination: "uploads/",
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + path.extname(file.originalname)); // unique filename
+const storage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: "medisynn-profiles", // cloudinary pe folder name
+    allowed_formats: ["jpg", "png", "jpeg"],
+    transformation: [{ width: 500, height: 500, crop: "limit" }],
   },
 });
+
 const upload = multer({ storage });
 
 // ======================= MongoDB =======================
@@ -289,11 +293,11 @@ api.post("/profile", async (req, res) => {
     );
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    const img = user.profile_image
-      ? `http://localhost:5000/uploads/${user.profile_image}`
-      : null;
-
-    res.json({ full_name: user.full_name, email: user.email, profile_image: img });
+    res.json({
+      full_name: user.full_name,
+      email: user.email,
+      profile_image: user.profile_image || null,
+    });
   } catch (err) {
     res.status(500).json({ message: "DB error" });
   }
@@ -307,17 +311,17 @@ api.post("/upload-profile-image", upload.single("image"), async (req, res) => {
     const { email } = req.body;
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
 
-    const filename = req.file.filename;
+    const imageUrl = req.file.path; // Cloudinary ka full secure URL
     const cleanEmail = email.toLowerCase().trim();
 
     const result = await User.updateOne(
       { email: cleanEmail },
-      { profile_image: filename }
+      { profile_image: imageUrl }
     );
     if (result.matchedCount === 0)
       return res.status(404).json({ message: "User not found" });
 
-    res.json({ filename });
+    res.json({ filename: imageUrl });
   } catch (err) {
     res.status(500).json({ message: "DB update failed" });
   }
@@ -357,15 +361,11 @@ api.post("/update-profile", async (req, res) => {
 // =================================================================
 api.post("/delete-profile-image", async (req, res) => {
   try {
-    const { email, filename } = req.body;
-    if (!email || !filename)
-      return res.status(400).json({ message: "Email & filename required" });
-
+    const { email, publicId } = req.body; // frontend se public_id bhejna hoga
     const cleanEmail = email.toLowerCase().trim();
-    const filePath = path.join(process.cwd(), "uploads", filename);
 
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
+    if (publicId) {
+      await cloudinary.uploader.destroy(publicId);
     }
 
     const result = await User.updateOne(
@@ -444,6 +444,7 @@ api.put("/dashboard/:email", async (req, res) => {
 // START SERVER
 // =================================================================
 app.use("/api", api);
-app.listen(5000, () =>
-  console.log("🚀 Server running on http://localhost:5000")
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () =>
+  console.log(`🚀 Server running on port ${PORT}`)
 );
